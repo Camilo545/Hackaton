@@ -1,40 +1,48 @@
 (() => {
-  const STORAGE_KEY = "cuenta-clara-sales-v1";
   const salesTable = document.getElementById("salesTable");
   const imageInput = document.getElementById("imageInput");
   const uploadZone = document.getElementById("uploadZone");
   const draftList = document.getElementById("draftList");
   const form = document.getElementById("saleForm");
   const formMessage = document.getElementById("formMessage");
-  let sales = loadSales();
+  const invoiceDialog = document.getElementById("invoiceDialog");
+  const invoicePreview = document.getElementById("invoicePreview");
+  let sales = [];
   let drafts = [];
+  let selectedDraftId = null;
+  let invoicePreviewUrl = null;
 
-  function loadSales() {
+  async function loadSales() {
+    setConnectionStatus("Conectando con PostgreSQL…", false);
     try {
-      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      return Array.isArray(stored) ? stored.filter(isValidSale) : [];
+      const response = await fetch("/api/sales");
+      if (response.status === 401) {
+        window.location.replace("/login");
+        return;
+      }
+      if (!response.ok) throw new Error(await getApiError(response));
+      sales = await response.json();
+      render();
+      setConnectionStatus("Conectado a PostgreSQL", true);
     } catch (error) {
-      console.error("No fue posible leer las ventas guardadas.", error);
-      return [];
+      console.error("No fue posible cargar las ventas desde PostgreSQL.", error);
+      setConnectionStatus("Sin conexión con PostgreSQL", false);
+      showMessage("No se pudieron cargar las ventas. Inicia el servidor y revisa DATABASE_URL y las tablas.", false, true);
     }
   }
 
-  function isValidSale(sale) {
-    return sale && typeof sale.product === "string" && sale.product.trim() &&
-      Number.isInteger(sale.quantity) && sale.quantity > 0 &&
-      Number.isFinite(sale.unitPrice) && sale.unitPrice > 0 &&
-      typeof sale.createdAt === "string";
+  async function getApiError(response) {
+    try {
+      const body = await response.json();
+      return body.error || `Error del servidor (${response.status}).`;
+    } catch {
+      return `Error del servidor (${response.status}).`;
+    }
   }
 
-  function saveSales() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sales));
-    } catch (error) {
-      console.error("No fue posible guardar las ventas.", error);
-      showMessage("No se pudo guardar en este dispositivo. Revisa el espacio disponible.", false);
-      return false;
-    }
-    return true;
+  function setConnectionStatus(message, connected) {
+    document.getElementById("connectionStatus").textContent = message;
+    document.getElementById("connectionIndicator").classList.toggle("connected", connected);
   }
 
   function formatMoney(value) {
@@ -112,7 +120,7 @@
 
   function renderHistory() {
     if (!sales.length) {
-      salesTable.innerHTML = '<tr class="empty-row"><td colspan="5"><span class="empty-table-icon">▤</span> Aún no hay ventas. ¡Registra la primera!</td></tr>';
+      salesTable.innerHTML = '<tr class="empty-row"><td colspan="6"><span class="empty-table-icon">▤</span> Aún no hay ventas. ¡Registra la primera!</td></tr>';
       return;
     }
     salesTable.innerHTML = [...sales].reverse().map((sale) => {
@@ -121,10 +129,34 @@
       return `<tr>
         <td><span class="product-cell"><span class="product-token">${escapeHtml(sale.product.trim().charAt(0).toUpperCase())}</span>${escapeHtml(sale.product.trim())}</span></td>
         <td>${sale.quantity} uds.</td><td>${formatMoney(sale.unitPrice)}</td><td>${escapeHtml(dateLabel)}</td>
+        <td>${sale.invoiceId ? `<button type="button" class="invoice-link" data-sale-id="${escapeHtml(sale.id)}">Ver factura</button>` : '<span class="no-invoice">Sin factura</span>'}</td>
         <td class="amount-cell">${formatMoney(sale.quantity * sale.unitPrice)}</td>
       </tr>`;
     }).join("");
+    salesTable.querySelectorAll(".invoice-link").forEach((button) => button.addEventListener("click", () => showInvoice(button.dataset.saleId)));
   }
+
+  async function showInvoice(saleId) {
+    try {
+      const response = await fetch(`/api/sales/${encodeURIComponent(saleId)}/invoice`);
+      if (!response.ok) throw new Error(await getApiError(response));
+      const file = await response.blob();
+      if (invoicePreviewUrl) URL.revokeObjectURL(invoicePreviewUrl);
+      invoicePreviewUrl = URL.createObjectURL(file);
+      invoicePreview.src = invoicePreviewUrl;
+      invoiceDialog.showModal();
+    } catch (error) {
+      console.error("No fue posible abrir la factura.", error);
+      showMessage(`No se pudo abrir la factura: ${error.message}`, false, true);
+    }
+  }
+
+  document.getElementById("closeInvoice").addEventListener("click", () => invoiceDialog.close());
+  invoiceDialog.addEventListener("close", () => {
+    invoicePreview.removeAttribute("src");
+    if (invoicePreviewUrl) URL.revokeObjectURL(invoicePreviewUrl);
+    invoicePreviewUrl = null;
+  });
 
   function showPage(pageId) {
     const page = document.querySelector(`.app-page[data-page="${pageId}"]`) || document.querySelector('.app-page[data-page="resumen"]');
@@ -163,21 +195,49 @@
     return globalThis.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
-  form.addEventListener("submit", (event) => {
+  let savingSale = false;
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (savingSale) return;
     const result = readSaleForm();
     if (result.error) {
       showMessage(result.error, false);
       return;
     }
-    sales.push(result.sale);
-    if (!saveSales()) {
-      sales.pop();
-      return;
+    savingSale = true;
+    const submitButton = form.querySelector('[type="submit"]');
+    submitButton.disabled = true;
+    const selectedDraft = drafts.find((draft) => draft.id === selectedDraftId);
+    try {
+      const saleData = new FormData();
+      saleData.set("product", result.sale.product);
+      saleData.set("quantity", String(result.sale.quantity));
+      saleData.set("unitPrice", String(result.sale.unitPrice));
+      if (selectedDraft) {
+        saleData.set("invoice", selectedDraft.file, selectedDraft.file.name);
+      }
+
+      const response = await fetch("/api/sales", { method: "POST", body: saleData });
+      if (!response.ok) throw new Error(await getApiError(response));
+      const savedSale = await response.json();
+      sales.push(savedSale);
+
+      render();
+      form.reset();
+      if (selectedDraft) {
+        URL.revokeObjectURL(selectedDraft.url);
+        drafts = drafts.filter((draft) => draft.id !== selectedDraft.id);
+        selectedDraftId = null;
+        renderDrafts();
+      }
+      showMessage("Venta guardada. ¡Las cuentas están al día!", true);
+    } catch (error) {
+      console.error("No fue posible guardar la venta en PostgreSQL.", error);
+      showMessage(error.message || "No se pudo guardar la venta. Revisa la conexión al servidor.", false);
+    } finally {
+      savingSale = false;
+      submitButton.disabled = false;
     }
-    render();
-    form.reset();
-    showMessage("Venta guardada. ¡Las cuentas están al día!", true);
   });
 
   document.getElementById("unitPrice").addEventListener("blur", (event) => {
@@ -216,16 +276,22 @@
 
   function renderDrafts() {
     draftList.innerHTML = drafts.map((draft) => `
-      <article class="draft-card" data-draft-id="${draft.id}">
+      <article class="draft-card${draft.id === selectedDraftId ? " selected" : ""}" data-draft-id="${draft.id}">
         <img class="draft-thumb" src="${draft.url}" alt="Vista previa de ${escapeHtml(draft.file.name)}" />
-        <div class="draft-info"><strong title="${escapeHtml(draft.file.name)}">${escapeHtml(draft.file.name)}</strong><small class="draft-status">${escapeHtml(draft.status)}</small></div>
+        <div class="draft-info"><strong title="${escapeHtml(draft.file.name)}">${escapeHtml(draft.file.name)}</strong><small class="draft-status">${draft.id === selectedDraftId ? "Adjunta a esta venta · " : ""}${escapeHtml(draft.status)}</small></div>
         <div class="draft-actions">
+          <button type="button" class="small-button attach-draft">${draft.id === selectedDraftId ? "Adjunta" : "Adjuntar"}</button>
           <button type="button" class="small-button read-draft" ${draft.busy ? "disabled" : ""}>${draft.busy ? "Leyendo…" : "Leer imagen"}</button>
           <button type="button" class="small-button remove-draft" aria-label="Quitar imagen">×</button>
         </div>
       </article>`).join("");
     draftList.querySelectorAll(".read-draft").forEach((button, index) => button.addEventListener("click", () => readDraft(drafts[index])));
+    draftList.querySelectorAll(".attach-draft").forEach((button, index) => button.addEventListener("click", () => {
+      selectedDraftId = selectedDraftId === drafts[index].id ? null : drafts[index].id;
+      renderDrafts();
+    }));
     draftList.querySelectorAll(".remove-draft").forEach((button, index) => button.addEventListener("click", () => {
+      if (drafts[index].id === selectedDraftId) selectedDraftId = null;
       URL.revokeObjectURL(drafts[index].url);
       drafts.splice(index, 1);
       renderDrafts();
@@ -291,22 +357,35 @@
     return { product: product ? product.replace(/^[\d\s.,$-]+/, "").slice(0, 80) : "", quantity, unitPrice };
   }
 
-  document.getElementById("clearData").addEventListener("click", () => {
+  document.getElementById("clearData").addEventListener("click", async () => {
     if (!sales.length) {
       showMessage("No hay registros para limpiar.", false, true);
       return;
     }
     if (!window.confirm("¿Seguro que quieres borrar todas las ventas guardadas en este dispositivo?")) return;
-    const previousSales = sales;
-    sales = [];
-    if (!saveSales()) {
-      sales = previousSales;
-      return;
+    try {
+      const response = await fetch("/api/sales", { method: "DELETE" });
+      if (!response.ok) throw new Error(await getApiError(response));
+      sales = [];
+      render();
+      showMessage("Se borraron las ventas y facturas de la base de datos.", true, true);
+    } catch (error) {
+      console.error("No se pudieron eliminar las ventas de PostgreSQL.", error);
+      showMessage("No se pudieron borrar los datos. Revisa la conexión al servidor.", false, true);
     }
-    render();
-    showMessage("Se borraron las ventas de este dispositivo.", true, true);
+  });
+
+  document.getElementById("logoutButton").addEventListener("click", async () => {
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("No se pudo cerrar la sesión.");
+      window.location.replace("/login");
+    } catch (error) {
+      console.error("No se pudo cerrar la sesión.", error);
+      showMessage("No se pudo cerrar la sesión. Inténtalo de nuevo.", false, true);
+    }
   });
 
   showPage(location.hash.slice(1) || "resumen");
-  render();
+  loadSales();
 })();

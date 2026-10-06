@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#202f28" />
+    <title>Iniciar sesión | Cuenta Clara</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,500,20,1;0,9..144,600,20,1;1,9..144,500,20,1&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/login.css" />
+  </head>
+  <body>
+    <main class="login-layout">
+      <section class="welcome-panel" aria-label="Bienvenido a Cuenta Clara">
+        <a class="brand" href="/" aria-label="Cuenta Clara">
+          <span class="brand-mark">cc</span>
+          <span>cuenta<span class="brand-light">clara</span></span>
+        </a>
+        <div class="welcome-copy">
+          <span class="welcome-kicker"><span class="sparkle">✳</span> FERIA UNIVERSITARIA</span>
+          <h1>Las buenas<br />ideas merecen<br /><em>cuentas claras.</em></h1>
+          <p>Todo lo que vendes, reunido en un solo lugar.</p>
+        </div>
+        <div class="welcome-note"><span class="note-icon">↗</span> Tu feria, en orden. Tu equipo, tranquilo.</div>
+        <div class="decor-ring ring-one"></div>
+        <div class="decor-ring ring-two"></div>
+        <div class="decor-star">✳</div>
+      </section>
+
+      <section class="form-side">
+        <div class="login-card">
+          <span class="section-kicker">PANEL DE ORGANIZACIÓN</span>
+          <h2>Qué bueno<br />verte de nuevo.</h2>
+          <p class="login-intro">Ingresa con tu cuenta para continuar.</p>
+          <form id="loginForm">
+            <label class="field">Usuario
+              <span class="field-control"><span class="field-icon">♙</span><input id="username" name="username" type="text" autocomplete="username" maxlength="64" placeholder="Tu nombre de usuario" required /></span>
+            </label>
+            <label class="field">Contraseña
+              <span class="field-control"><span class="field-icon">▣</span><input id="password" name="password" type="password" autocomplete="current-password" maxlength="128" placeholder="Tu contraseña" required /><button class="toggle-password" type="button" id="togglePassword" aria-label="Mostrar contraseña">Mostrar</button></span>
+            </label>
+            <button class="submit-button" id="submitButton" type="submit">Entrar al panel <span>→</span></button>
+            <p class="form-message" id="formMessage" role="alert" aria-live="polite"></p>
+          </form>
+          <div class="secure-note"><span>●</span> Acceso privado para el equipo organizador</div>
+        </div>
+        <footer class="login-footer">cuenta<span>clara</span> <i>·</i> Cuentas simples para días increíbles.</footer>
+      </section>
+    </main>
+    <script src="/login.js" defer></script>
+  </body>
+</html>
